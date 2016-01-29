@@ -9,7 +9,10 @@ description: >
 tags: ["applications", "bigdata", "hadoop", "apache"]
 provides:
   hdfs:
-    interface: hdfs
+    interface: dfs
 requires:
   datanode:
-    interface: datanode
+    interface: dfs-slave
+peers:
+  hdfscluster:
+    interface: hdfscluster
