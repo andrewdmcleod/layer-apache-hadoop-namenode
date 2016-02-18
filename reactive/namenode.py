@@ -83,6 +83,7 @@ def hdfscluster_decreased(hdfscluster):
 @when('namenode.started', 'datanode.related')
 def send_info(datanode):
     hadoop = get_hadoop_base()
+    hdfs = HDFS(hadoop)
     local_hostname = hookenv.local_unit().replace('/', '-')
     hookenv.log("Peer units are: " + str(peer_units()))
     namenodes = [local_hostname] + peer_units()
@@ -121,24 +122,22 @@ def register_datanodes(datanode):
     set_state('namenode.ready')
 
 
-@when('hdfs.related')
+@when('namenode.clients')
 @when('namenode.ready')
 def accept_clients(clients):
     hadoop = get_hadoop_base()
     local_hostname = hookenv.local_unit().replace('/', '-')
-    private_address = hookenv.unit_get('private-address')
-    ip_addr = utils.resolve_private_address(private_address)
     hdfs_port = hadoop.dist_config.port('namenode')
     webhdfs_port = hadoop.dist_config.port('nn_webapp_http')
 
     clients.send_spec(hadoop.spec())
     clients.send_namenodes([local_hostname])
     clients.send_ports(hdfs_port, webhdfs_port)
-    clients.send_hosts_map({ip_addr: local_hostname})
+    clients.send_hosts_map(utils.get_kv_hosts())
     clients.send_ready(True)
 
 
-@when('hdfs.related')
+@when('namenode.clients')
 @when_not('namenode.ready')
 def reject_clients(clients):
     clients.send_ready(False)
@@ -154,7 +153,7 @@ def unregister_datanode(datanode):
     slaves_leaving = [node['host'] for node in nodes_leaving]
     hookenv.log('Slaves leaving: {}'.format(slaves_leaving))
 
-    slaves_remaining = list(set(slaves) ^ set(slaves_leaving))
+    slaves_remaining = list(set(slaves) - set(slaves_leaving))
     unitdata.kv().set('namenode.slaves', slaves_remaining)
     hdfs.register_slaves(slaves_remaining)
     hdfs.configure_qjm(slaves_remaining)
@@ -167,3 +166,8 @@ def unregister_datanode(datanode):
         remove_state('namenode.ready')
 
     datanode.dismiss()
+
+@when('benchmark.related')
+def register_benchmarks(benchmark):
+    benchmark.register('nnbench', 'testdfsio')
+

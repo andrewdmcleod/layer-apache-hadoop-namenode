@@ -8,11 +8,13 @@ description: >
   This charm manages the HDFS master node (NameNode).
 tags: ["applications", "bigdata", "hadoop", "apache"]
 provides:
-  hdfs:
-    interface: dfs
-requires:
-  datanode:
-    interface: dfs-slave
 peers:
   hdfscluster:
     interface: hdfscluster
+  namenode:
+    interface: dfs
+  benchmark:
+    interface: benchmark
+requires:
+  datanode:
+    interface: dfs-slave
