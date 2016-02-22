@@ -2,6 +2,7 @@ from charms.reactive import when
 from charms.reactive import when_not
 from charms.reactive import set_state
 from charms.reactive import remove_state
+from charms.reactive import is_state
 from charms.reactive.helpers import data_changed
 from charms.hadoop import get_hadoop_base
 from jujubigdata.handlers import HDFS
@@ -17,7 +18,7 @@ def configure_namenode():
     ip_addr = utils.resolve_private_address(private_address)
     hadoop = get_hadoop_base()
     hdfs = HDFS(hadoop)
-    hdfs.configure_namenode()
+    hdfs.configure_namenode([local_hostname])
     hdfs.format_namenode()
     hdfs.start_namenode()
     hdfs.create_hdfs_dirs()
@@ -40,7 +41,7 @@ def send_info(datanode):
     hdfs_port = hadoop.dist_config.port('namenode')
     webhdfs_port = hadoop.dist_config.port('nn_webapp_http')
 
-    utils.update_kv_hosts({node['ip']: node['host'] for node in datanode.nodes()})
+    utils.update_kv_hosts(datanode.hosts_map())
     utils.manage_etc_hosts()
 
     datanode.send_spec(hadoop.spec())
@@ -49,16 +50,35 @@ def send_info(datanode):
     datanode.send_ssh_key(utils.get_ssh_key('hdfs'))
     datanode.send_hosts_map(utils.get_kv_hosts())
 
-    slaves = [node['host'] for node in datanode.nodes()]
+    slaves = datanode.nodes()
     if data_changed('namenode.slaves', slaves):
         unitdata.kv().set('namenode.slaves', slaves)
         hdfs.register_slaves(slaves)
+        hdfs.refresh_slaves()
 
     hookenv.status_set('active', 'Ready ({count} DataNode{s})'.format(
         count=len(slaves),
         s='s' if len(slaves) > 1 else '',
     ))
     set_state('namenode.ready')
+
+
+@when('namenode-cluster.joined', 'datanode.journalnode.ha')
+def configure_ha(cluster, datanode):
+    hadoop = get_hadoop_base()
+    hdfs = HDFS(hadoop)
+    cluster_nodes = cluster.nodes()
+    jn_nodes = datanode.nodes()
+    jn_port = datanode.jn_port()
+    if data_changed('namenode.ha', [cluster_nodes, jn_nodes, jn_port]):
+        utils.update_kv_hosts(cluster.hosts_map())
+        utils.manage_etc_hosts()
+        hdfs.register_journalnodes(jn_nodes, jn_port)
+        hdfs.restart_namenode()
+        datanode.send_namenodes(cluster_nodes)
+        if not is_state('namenode.shared-edits.init'):
+            hdfs.init_sharededits()
+            set_state('namenode.shared-edits.init')
 
 
 @when('namenode.clients')
@@ -105,7 +125,7 @@ def unregister_datanode(datanode):
 
     datanode.dismiss()
 
+
 @when('benchmark.related')
 def register_benchmarks(benchmark):
     benchmark.register('nnbench', 'testdfsio')
-
