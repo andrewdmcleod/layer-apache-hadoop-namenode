@@ -8,8 +8,8 @@ description: >
   This charm manages the HDFS master node (NameNode).
 tags: ["applications", "bigdata", "hadoop", "apache"]
 peers:
-  hdfscluster:
-    interface: hdfscluster
+  namenode-cluster:
+    interface: namenode-cluster
 provides:
   namenode:
     interface: dfs
