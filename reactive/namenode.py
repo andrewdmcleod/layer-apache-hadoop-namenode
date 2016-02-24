@@ -21,6 +21,7 @@ def configure_namenode():
     hdfs.configure_namenode([local_hostname])
     hdfs.format_namenode()
     if hookenv.is_leader:
+        hookenv.log("LEADER NOTIFICATION NUMBER ONE")
         hdfs.start_namenode()
     hdfs.create_hdfs_dirs()
     hadoop.open_ports('namenode')
@@ -81,14 +82,18 @@ def configure_ha(cluster, datanode):
             hdfs.register_journalnodes(jn_nodes, jn_port)
         datanode.send_namenodes(cluster_nodes)
         if hookenv.is_leader:
-            hdfs.transition_to_active([local_hostname])
+            hookenv.log("LEADER NOTIFICATION NUMBER TWO")
             if len(jn_nodes) > 2 and not is_state('namenode.shared-edits.init'):
                 hdfs.stop_namenode()
                 hdfs.init_sharededits()
                 set_state('namenode.shared-edits.init')
                 hdfs.start_namenode()
                 hdfs.transition_to_active([local_hostname])
+            else:
+                hdfs.restart_namenode()
+                hdfs.transition_to_active([local_hostname])
         if not hookenv.is_leader and len(jn_nodes) > 2:
+            hookenv.log("LEADER NOT-LEADER NOTIFICATION NUMBER ONE")
             if not is_state('namenode.standby.bootstrapped'):
                 hdfs.bootstrap_standby()
                 set_state('namenode.standby.bootstrapped')
