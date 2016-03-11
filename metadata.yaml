@@ -18,3 +18,5 @@ provides:
 requires:
   datanode:
     interface: dfs-slave
+  zookeeper:
+    interface: zookeeper
