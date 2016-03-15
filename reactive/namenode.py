@@ -132,7 +132,7 @@ def cluster_degraded(*args):
     remove_state('namenode-cluster.configured')
 
 
-when('namenode.started', 'namenode-cluster.joined', 'datanode.journalnode.joined')
+@when('namenode.started', 'namenode-cluster.joined', 'datanode.journalnode.joined')
 def configure_journalnodes(cluster, datanode):
     jn_nodes = datanode.nodes()
     jn_port = datanode.jn_port()
