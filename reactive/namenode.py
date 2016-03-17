@@ -222,14 +222,14 @@ def configure_zookeeper(cluster, zookeeper):
                 cluster.zookeeper_formatted()
                 set_state('zookeeper.formatted')
                 hdfs.restart_zookeeper()
-                hdfs.start_namenode() 
+                hdfs.start_namenode()
                 hookenv.status_set('active', 'Automatic Failover Enabled')
     else:
         if cluster.is_zookeeper_formatted():
             set_state('dn.queue.restart')
             set_state('zookeeper.formatted')
             hdfs.restart_zookeeper()
-            hdfs.start_namenode() 
+            hdfs.start_namenode()
             hookenv.status_set('active', 'Automatic Failover Enabled')
 
 @when('datanode.journalnode.joined', 'dn.queue.restart', 'namenode.standby.bootstrapped')
