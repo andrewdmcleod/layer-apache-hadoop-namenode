@@ -241,6 +241,7 @@ def configure_zookeeper(cluster, zookeeper):
     if data_changed('zookeepers', zookeeper_nodes):
         hdfs.configure_zookeeper(zookeeper_nodes)
         if hookenv.is_leader():
+            hdfs.stop_namenode()
             hdfs.format_zookeeper()
             #cluster.jns_init()
             cluster.zookeeper_formatted()
@@ -264,15 +265,15 @@ def departed_zookeeper(cluster):
     hadoop = get_hadoop_base()
     hdfs = HDFS(hadoop)
     hdfs.stop_zookeeper()
-    remove_state('zookeeper.formatted')     
+    remove_state('zookeeper.formatted')
 
 @when('namenode.started', 'namenode-cluster.joined', 'zookeeper.formatted', 'start.namenode')
 def post_zookeeper_setup(cluster):
     hadoop = get_hadoop_base()
     hdfs = HDFS(hadoop)
-    hdfs.start_namenode()  
+    hdfs.start_namenode()
     if hookenv.is_leader():
-       cluster.jns_init() 
+        cluster.jns_init()
     remove_state('start.namenode')
 
 
