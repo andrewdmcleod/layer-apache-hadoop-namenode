@@ -1,5 +1,4 @@
 includes:
-repo: git@github.com:juju-solutions/layer-apache-hadoop-namenode.git
   - 'layer:hadoop-base'
   - 'interface:namenode-cluster'
   - 'interface:dfs'
@@ -7,3 +6,4 @@ repo: git@github.com:juju-solutions/layer-apache-hadoop-namenode.git
   - 'interface:benchmark'
   - 'interface:zookeeper'
   - 'layer:hadoop-ganglia'
+repo: git@github.com:juju-solutions/layer-apache-hadoop-namenode.git
