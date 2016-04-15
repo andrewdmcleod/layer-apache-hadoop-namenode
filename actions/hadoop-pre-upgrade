@@ -1,0 +1,139 @@
+#!/bin/bash
+export JUJU_PATH=$PATH
+. /etc/environment
+export PATH=$PATH:$JUJU_PATH
+export JAVA_HOME
+
+rm -rf /tmp/dfs-v*
+cd "$HADOOP_HOME"
+
+current_hadoop_ver=`/usr/lib/hadoop/bin/hadoop version|head -n1|awk '{print $2}'`
+new_hadoop_ver=`action-get version`
+
+function clean_checkpoint {
+        su hdfs -c "hdfs dfs -rm hdfs:///user/ubuntu/checkpoint_hadoop"
+}
+
+status-set maintenance "creating upgrade checkpoint files in hdfs:///user/ubuntu/"
+su hdfs -c "date > /tmp/checkpoint_hadoop"
+if ! su hdfs -c "bin/hdfs dfs -put /tmp/checkpoint_hadoop hdfs:///user/ubuntu/" ; then
+        action-fail "checkpoint file(s) could not be created, hdfs not running? Aborting upgrade"
+        exit 1
+fi
+
+if [ "$new_hadoop_ver" == "$current_hadoop_ver" ] ; then
+        action-set result="Same version already installed, aborting"
+        action-fail "Same version already installed"
+        clean_checkpoint
+        exit 1 
+fi
+
+status-set maintenance "checking hdfs root..."
+su hdfs -c "bin/hdfs fsck / -files -blocks -locations > /tmp/dfs-v-old-fsck-1.log"
+exitcode=$?
+action-set exitcode.fsck-hdfs-1=$exitcode
+if [ ! $exitcode -eq 0 ] ; then 
+        action-fail "fsck exitcode not zero - check manually"
+        clean_checkpoint
+        exit 1
+fi
+
+status-set maintenance "logging hdfs namespace..."
+su hdfs -c "bin/hdfs dfs -ls -R / > /tmp/dfs-v-old-lsr-1.log"
+exitcode=$?
+action-set exitcode.dfsls-1=$exitcode
+if [ ! $exitcode -eq 0 ] ; then 
+        action-fail "could not ls -R dfs - check manually"
+        clean_checkpoint
+        exit 1
+fi
+
+status-set maintenance "creating dfsadmin report..."
+su hdfs -c "bin/hdfs dfsadmin -report | grep -v DFS|grep -v contact|grep -v Capacity > /tmp/dfs-v-old-report-1.log"
+exitcode=$?
+action-set exitcode.dfsadmin-report=$exitcode
+if [ ! $exitcode -eq 0 ] ; then 
+        action-fail "Error running dfsadmin -report - check manually"
+        clean_checkpoint
+        exit 1
+fi
+
+status-set maintenance "checking hdfs namespace log..."
+su hdfs -c "bin/hdfs dfs -ls -R / > /tmp/dfs-v-old-lsr-2.log"
+diff /tmp/dfs-v-old-lsr-1.log /tmp/dfs-v-old-lsr-2.log > /dev/null
+if [ ! $? -eq 0 ] ; then 
+        action-fail "dfs ls -R - differences found (/tmp/dfs-v-old-lsr-?.log), aborting pre-upgrade"
+        clean_checkpoint
+        exit 1
+        status-set active "dfs ls -R - differences found - aborting pre-upgrade"
+fi 
+action-set dfsls.diff="No differences found between 1st and 2nd dfs ls -R runs"
+
+status-set maintenance "checking dfsadmin report log..."
+su hdfs -c "bin/hdfs dfsadmin -report | grep -v DFS|grep -v contact|grep -v Capacity > /tmp/dfs-v-old-report-2.log"
+diff /tmp/dfs-v-old-report-1.log /tmp/dfs-v-old-report-2.log > /dev/null
+if [ ! $? -eq 0 ] ; then
+        status-set active "dfsadmin report - differences found (/tmp/dfs-v-old-report-?.log) aborting pre-upgrade"
+        clean_checkpoint
+        exit 1
+fi
+action-set dfsadminreport.diff="No differences found between 1st and 2nd dfsadmin -report runs"
+
+status-set maintenance "backing up edit and fsimage files to /home/hdfs/backup"
+if [ ! -d /home/hdfs/backup/ ] ; then
+        mkdir /home/hdfs/backup/
+fi
+
+if [ -d /tmp/hadoop-hdfs/dfs/namesecondary/current/ ] ; then
+        cp /tmp/hadoop-hdfs/dfs/namesecondary/current/edits* /home/hdfs/backup/
+        exitcode=$?
+        action-set exitcode.backup-edits=$exitcode
+        if [ ! $exitcode -eq 0 ] ; then
+                action-fail "Could not cp /tmp/hadoop-hdfs/dfs/namesecondary/current/edits* to /home/hdfs/backup/"
+                clean_checkpoint
+                exit 1
+        fi
+
+        cp /tmp/hadoop-hdfs/dfs/namesecondary/current/fsimage* /home/hdfs/backup/
+        exitcode=$?
+        action-set exitcode.backup-fsimage=$exitcode
+        if [ ! $exitcode -eq 0 ] ; then
+                action-fail "Could not cp /tmp/hadoop-hdfs/dfs/namesecondary/current/fsimage* to /home/hdfs/backup/"
+                clean_checkpoint 
+                exit 1
+        fi
+fi
+
+status-set maintenance "cycling dfs to create namespace checkpoint for rollback"
+su hdfs -c "sbin/stop-dfs.sh"
+exitcode=$?
+action-set exitcode.cycledfs-1=$exitcode
+if [ ! $exitcode -eq 0 ] ; then 
+        action-fail "Could not stop dfs - pre-upgrade aborted"
+        clean_checkpoint
+        exit 1
+fi
+
+su hdfs -c "sbin/start-dfs.sh"
+exitcode=$?
+action-set exitcode.cycledfs-2=$exitcode
+if [ ! $exitcode -eq 0 ] ; then
+        action-fail "Could not start dfs - pre-upgrade aborted"
+        clean_checkpoint
+        exit 1
+fi
+
+status-set maintenance "bringing DFS daemons down"
+su hdfs -c "sbin/stop-dfs.sh"
+exitcode=$?
+action-set exitcode.start-dfs=$exitcode
+if [ ! $exitcode -eq 0 ] ; then
+        action-fail "Could not stop dfs - pre-upgrade aborted"
+        clean_checkpoint
+        exit 1
+fi
+
+chlp unitdata set charm.active False
+action-set pre-upgrade="ready for upgrade"
+action-set next-step="run hadoop-upgrade on all other hadoop nodes before hdfs-master - see hdfs-master README.md"
+status-set maintenance "hadoop-pre-upgrade complete - run hadoop-upgrade on all hadoop nodes"

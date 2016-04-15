@@ -1,0 +1,89 @@
+#!/bin/bash
+export SAVEPATH=$PATH
+. /etc/environment
+export PATH=$PATH:$SAVEPATH
+export JAVA_HOME
+
+current_hadoop_ver=`/usr/lib/hadoop/bin/hadoop version|head -n1|awk '{print $2}'`
+new_hadoop_ver=`action-get version`
+rollback=`action-get rollback`
+finalize=`action-get finalize`
+
+# Following condition may seem unintuitive - but at this point, current_hadoop_ver should match new_hadoop_ver
+# as current_hadoop_ver should be the new version of hadoop software
+if [ "$new_hadoop_ver" != "$current_hadoop_ver" ] ; then
+        action-set result="Version specified is not installed on this system, aborting"
+        action-fail "Version specified is not installed on this system, aborting"
+        exit 1
+fi
+
+if [ "${finalize}" == "True" ] ; then
+          cd ${HADOOP_HOME}
+          su hdfs -c "bin/hdfs dfsadmin -finalizeUpgrade"
+          action-set finalized="true"
+          status-set active "Ready - upgrade finalized, rollback unavailable" 
+          exit 0
+fi
+
+if [ "${rollback}" == "True" ] ; then 
+          cd ${HADOOP_HOME}
+          status-set maintenance "Performing namenode rollback..." 
+
+          # following workaround for rollback to 2.4.1 to 2.7.1:
+          # echo y to prompt, rather than using start-dfs.sh -rollback due to 
+          # https://issues.apache.org/jira/browse/HDFS-8226
+          su hdfs -c "echo y|bin/hdfs namenode -rollback"
+
+          status-set maintenance "Performing datanode rollback..."
+          su hdfs -c "sbin/hadoop-daemons.sh --config $HADOOP_CONF_DIR --script 'hdfs' start datanode -rollback"
+          su hdfs -c "sbin/start-dfs.sh"
+          procedure="rollback"
+fi
+  
+if [ "${rollback}" == "False" ] ; then
+          cd ${HADOOP_HOME}
+          status-set maintenance "starting dfs in upgrade mode"
+          su hdfs -c "sbin/start-dfs.sh -upgrade"
+          procedure="upgrade"
+fi              
+                          
+cd ${HADOOP_HOME}
+
+status-set maintenance "creating dfsadmin report"
+su hdfs -c "bin/hdfs dfsadmin -report | grep -v DFS|grep -v contact|grep -v Capacity > /tmp/dfs-v-new-report-1.log "
+diff /tmp/dfs-v-old-report-2.log /tmp/dfs-v-new-report-1.log 
+if [ ! $? -eq 0 ] ; then
+        action-set newhadoop.diff-report="failed diff - check /tmp/dfs-v-*-report*"
+fi
+
+status-set maintenance "creating fs log"
+su hdfs -c "bin/hdfs dfs -ls -R / > /tmp/dfs-v-new-lsr-0.log"
+diff /tmp/dfs-v-new-lsr-0.log /tmp/dfs-v-old-lsr-2.log
+if [ ! $? -eq 0 ] ; then
+        action-set newhadoop.diff-lsr="fail"
+fi
+
+status-set maintenance "checking fs"
+su hdfs -c "bin/hdfs fsck / -files -blocks -locations > /tmp/dfs-v-new-fsck-1.log"
+diff /tmp/dfs-v-old-fsck-1.log /tmp/dfs-v-new-fsck-1.log
+if [ ! $? -eq 0 ] ; then
+        action-set newhadoop.diff-fsck="fail"
+fi
+
+hadoop_version=`/usr/lib/hadoop/bin/hadoop version|head -n1|awk '{print $2}'`
+
+status-set maintenance "looking in hdfs for ${procedure} checkpoint files..."
+if ! su hdfs -c "bin/hdfs dfs -test -e hdfs:///user/ubuntu/checkpoint_hadoop" ; then
+         action-set result="${procedure} checkpoint file hdfs:///user/ubuntu/checkpoint_hadoop not found - check fs manually"
+         status-set active "Unknown - see action results and check fs manually"
+         action-set hadoop.version="${hadoop_version}"
+else                
+         status-set maintenance "deleting checkpoint file"
+         sleep 30 
+         su hdfs -c "bin/hdfs dfs -rm hdfs:///user/ubuntu/checkpoint_hadoop"
+         action-set newhadoop.running="true"
+         action-set hadoop.version="${hadoop_version}"
+         status-set active "Ready - hadoop version ${hadoop_version} ${procedure} complete" 
+fi
+chlp unitdata set charm.active True 
+

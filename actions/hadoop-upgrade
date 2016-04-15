@@ -1,0 +1,179 @@
+#!/bin/bash
+action-set charmdir.before=${CHARM_DIR}
+export SAVEPATH=$PATH
+. /etc/environment
+export PATH=$PATH:$SAVEPATH
+export JAVA_HOME
+
+	
+current_hadoop_ver=`/usr/lib/hadoop/bin/hadoop version|head -n1|awk '{print $2}'`
+new_hadoop_ver=`action-get version`
+cpu_arch=`lscpu|grep -i arch|awk '{print $2}'`
+rollback=`action-get rollback`
+peer_unit='relation-list -r $(relation-ids namenode-cluster)'
+upgrade_type=`action-get upgrade-type`
+
+
+if [[ "$peer_unit" == "" ]] ; then
+ 	if ! [[ "$upgrade_type" == "standalone" ]] ; then
+		action-set result="No cluster peers detected, upgrade aborted"
+		status-set active "No cluster peers detected, upgrade aborted"
+		exit 1
+	else
+		standalone_upgrade	
+	fi
+else
+	if [[ "$upgrade_type" == "rolling" ]] ; then
+		rolling_upgrade
+	else
+		standalone_upgrade
+fi
+
+function rolling_upgrade () {
+	if [ "$new_hadoop_ver" == "$current_hadoop_ver" ] ; then 
+	        action-set result="Same version already installed, aborting"
+	        action-fail "Same version already installed"
+	        exit 1
+	fi
+
+	if pgrep -f Dproc_namenode ; then 
+		pkill -9 -f NameNode
+	        #action-set result="namenode process detected, upgrade aborted"
+	        #status-set active "namenode process detected, upgrade aborted" 
+	        #exit 1
+	fi
+	
+	if [ "${rollback}" == "True" ] ; then
+	        if [ -d /usr/lib/hadoop-${new_hadoop_ver} ] ; then
+	                rm /usr/lib/hadoop
+	                ln -s /usr/lib/hadoop-${new_hadoop_ver} /usr/lib/hadoop
+	                if [ -d /usr/lib/hadoop-${current_hadoop_ver}/logs ] ; then
+	                        mv /usr/lib/hadoop-${current_hadoop_ver}/logs /usr/lib/hadoop/
+	                fi
+	                action-set newhadoop.rollback="successfully rolled back"
+	                status-set active "Ready - rollback to ${new_hadoop_ver} complete - ready for hadoop-post-upgrade"
+	                exit 0
+	        else
+	                action-set newhadoop.rollback="previous version not found, unpacking..."
+	                status-set active "previous version not found, unpacking..."
+	        fi
+	fi
+	                
+	status-set maintenance "Fetching hadoop-${new_hadoop_ver}-${cpu_arch}"
+	juju-resources fetch hadoop-${new_hadoop_ver}-${cpu_arch}
+	if [ ! $? -eq 0 ] ; then
+	        action-set newhadoop.fetch="fail"
+	        exit 1
+	fi
+	action-set newhadoop.fetch="success"
+	
+	status-set maintenance "Verifying hadoop-${new_hadoop_ver}-${cpu_arch}"
+	juju-resources verify hadoop-${new_hadoop_ver}-${cpu_arch}
+	if [ ! $? -eq 0 ] ; then
+	        action-set newhadoop.verify="fail"
+	        exit 1
+	fi
+	action-set newhadoop.verify="success"
+	
+	new_hadoop_path=`juju-resources resource_path hadoop-${new_hadoop_ver}-${cpu_arch}`
+	if [ -h /usr/lib/hadoop ] ; then
+	       rm /usr/lib/hadoop
+	fi
+	
+	mv /usr/lib/hadoop/ /usr/lib/hadoop-${current_hadoop_ver}
+	ln -s /usr/lib/hadoop-${current_hadoop_ver}/ /usr/lib/hadoop
+	current_hadoop_path=hadoop-${current_hadoop_ver}
+	
+	status-set maintenance "Extracting hadoop-${new_hadoop_ver}-${cpu_arch}"
+	tar -zxvf ${new_hadoop_path} -C /usr/lib/
+	if [ $? -eq 0 ] ; then
+	        if [ -h /usr/lib/hadoop ] ; then
+	                rm /usr/lib/hadoop
+	        fi
+	        ln -s /usr/lib/hadoop-${new_hadoop_ver} /usr/lib/hadoop
+	fi
+	if [ -d ${current_hadoop_path}/logs ] ; then
+	        mv ${current_hadoop_path}/logs ${new_hadoop_path}/
+	fi
+	action-set charmdir.after=${CHARM_DIR}
+	# set hadoop.version in unitdata
+	chlp unitdata set hadoop.version ${new_hadoop_ver}
+	
+	hooks/refresh-spec
+	action-set result="complete"
+	status-set maintenance "hadoop version ${new_hadoop_ver} installed - ready for hadoop-post-upgrade"
+}
+
+function standalone_upgrade () { 
+	if pgrep -f Dproc_namenode ; then 
+	        action-set result="namenode process detected, upgrade aborted"
+	        status-set active "namenode process detected, upgrade aborted" 
+	        exit 1
+	fi
+	
+	if [ "$new_hadoop_ver" == "$current_hadoop_ver" ] ; then 
+	        action-set result="Same version already installed, aborting"
+	        action-fail "Same version already installed"
+	        exit 1
+	fi
+	
+	if [ "${rollback}" == "True" ] ; then
+	        if [ -d /usr/lib/hadoop-${new_hadoop_ver} ] ; then
+	                rm /usr/lib/hadoop
+	                ln -s /usr/lib/hadoop-${new_hadoop_ver} /usr/lib/hadoop
+	                if [ -d /usr/lib/hadoop-${current_hadoop_ver}/logs ] ; then
+	                        mv /usr/lib/hadoop-${current_hadoop_ver}/logs /usr/lib/hadoop/
+	                fi
+	                action-set newhadoop.rollback="successfully rolled back"
+	                status-set active "Ready - rollback to ${new_hadoop_ver} complete - ready for hadoop-post-upgrade"
+	                exit 0
+	        else
+	                action-set newhadoop.rollback="previous version not found, unpacking..."
+	                status-set active "previous version not found, unpacking..."
+	        fi
+	fi
+	                
+	status-set maintenance "Fetching hadoop-${new_hadoop_ver}-${cpu_arch}"
+	juju-resources fetch hadoop-${new_hadoop_ver}-${cpu_arch}
+	if [ ! $? -eq 0 ] ; then
+	        action-set newhadoop.fetch="fail"
+	        exit 1
+	fi
+	action-set newhadoop.fetch="success"
+	
+	status-set maintenance "Verifying hadoop-${new_hadoop_ver}-${cpu_arch}"
+	juju-resources verify hadoop-${new_hadoop_ver}-${cpu_arch}
+	if [ ! $? -eq 0 ] ; then
+	        action-set newhadoop.verify="fail"
+	        exit 1
+	fi
+	action-set newhadoop.verify="success"
+	
+	new_hadoop_path=`juju-resources resource_path hadoop-${new_hadoop_ver}-${cpu_arch}`
+	if [ -h /usr/lib/hadoop ] ; then
+	       rm /usr/lib/hadoop
+	fi
+	
+	mv /usr/lib/hadoop/ /usr/lib/hadoop-${current_hadoop_ver}
+	ln -s /usr/lib/hadoop-${current_hadoop_ver}/ /usr/lib/hadoop
+	current_hadoop_path=hadoop-${current_hadoop_ver}
+	
+	status-set maintenance "Extracting hadoop-${new_hadoop_ver}-${cpu_arch}"
+	tar -zxvf ${new_hadoop_path} -C /usr/lib/
+	if [ $? -eq 0 ] ; then
+	        if [ -h /usr/lib/hadoop ] ; then
+	                rm /usr/lib/hadoop
+	        fi
+	        ln -s /usr/lib/hadoop-${new_hadoop_ver} /usr/lib/hadoop
+	fi
+	if [ -d ${current_hadoop_path}/logs ] ; then
+	        mv ${current_hadoop_path}/logs ${new_hadoop_path}/
+	fi
+	action-set charmdir.after=${CHARM_DIR}
+	# set hadoop.version in unitdata
+	chlp unitdata set hadoop.version ${new_hadoop_ver}
+	
+	hooks/refresh-spec
+	action-set result="complete"
+	status-set maintenance "hadoop version ${new_hadoop_ver} installed - ready for hadoop-post-upgrade"
+}
